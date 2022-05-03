@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, ops::Range};
 
 pub mod addr;
 pub mod error;
@@ -94,9 +94,13 @@ impl ProgramHeader {
         let p_memsz = Addr::parse(reader)?;
         let p_align = Addr::parse(reader)?;
 
+        let segment_start: usize = p_offset.into();
+        let segment_end: usize = Into::<usize>::into(p_offset) +
+            Into::<usize>::into(p_filesz);
+
         let segment_data_range = Range {
-            start: p_offset,
-            end: p_offset + p_memsz
+            start: segment_start,
+            end: segment_end
         };
 
         let data = reader.read_slice_from(segment_data_range)?.to_vec();

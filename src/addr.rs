@@ -1,5 +1,5 @@
 //! Module that defines a 64-bit address
-use core::fmt;
+use core::{fmt, ops::Add};
 
 use crate::{error::ParseError, reader};
 
@@ -15,6 +15,13 @@ impl fmt::Debug for Addr {
 impl fmt::Display for Addr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self, f)
+    }
+}
+
+impl Add for Addr {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        Self(self.0 + other.0)
     }
 }
 
