@@ -1,9 +1,9 @@
 //! Module that defines a 64-bit address
-use core::{fmt, ops::Add};
+use core::{fmt, ops::Add, ops::Sub};
 
 use crate::{error::ParseError, reader};
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, PartialOrd)]
 pub struct Addr(pub u64);
 
 impl fmt::Debug for Addr {
@@ -22,6 +22,13 @@ impl Add for Addr {
     type Output = Self;
     fn add(self, other: Self) -> Self {
         Self(self.0 + other.0)
+    }
+}
+
+impl Sub for Addr {
+    type Output = Self;
+    fn sub(self, other: Self) -> Self {
+        Self(self.0 - other.0)
     }
 }
 

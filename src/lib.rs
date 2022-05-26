@@ -80,7 +80,7 @@ pub struct ProgramHeader {
     /// power of 2 with p_vaddr = p_offset % p_align
     p_align: Addr,
     /// A vector storing the contents of the segment
-    data: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
 impl ProgramHeader {
@@ -116,6 +116,28 @@ impl ProgramHeader {
             p_align,
             data
         })
+    }
+
+    /// Returns a range where the segment is stored in the file
+    pub fn file_range(&self) -> Range<Addr> {
+        self.p_offset..self.p_offset + self.p_filesz
+    }
+
+    /// Returns a range where the segment should be stored in memory
+    pub fn mem_range(&self) -> Range<Addr> {
+        self.p_vaddr..self.p_vaddr + self.p_memsz
+    }
+
+    pub fn p_vaddr(&self) -> Addr {
+        self.p_vaddr
+    }
+
+    pub fn p_memsz(&self) -> Addr {
+        self.p_memsz
+    }
+
+    pub fn p_flags(&self) -> SegmentFlags {
+        self.p_flags
     }
 }
 
