@@ -86,6 +86,8 @@ impl From<ParseError> for ProgramHeaderError {
 pub enum SegmentError {
     TypeUnknown(u32),
     ParseError(ParseError),
+    SegmentFlagsParseFailed(u32),
+    DynamicEntryUnknown(u64),
 }
 
 impl From<ParseError> for SegmentError {

@@ -7,7 +7,9 @@ pub mod machine;
 pub mod segment;
 pub mod reader;
 
-use crate::{
+pub use segment::{SegmentContents, DynamicTable};
+
+pub use crate::{
     addr::Addr,
     error::{ElfError, ElfHeaderError, ProgramHeaderError},
     file_type::FileType,
@@ -35,7 +37,7 @@ impl Elf64 {
         // Move the read cursor to the program header table beginning
         reader.seek(elf_header.e_phoff().into())?;
 
-        for index in 0..elf_header.e_phnum() {
+        for _ in 0..elf_header.e_phnum() {
             ph_table.push(ProgramHeader::parse(&mut reader)?);
         }
 
@@ -59,7 +61,6 @@ impl fmt::Debug for Elf64 {
 
 /// Tell the system how to create a process image. It is found at file offset
 /// `e_phoff` and consists of `e_phnum` entries, each with size `e_phentsize`.
-#[derive(Debug)]
 pub struct ProgramHeader {
     /// Identifies the type of the segment
     p_type: SegmentType,
@@ -81,6 +82,8 @@ pub struct ProgramHeader {
     p_align: Addr,
     /// A vector storing the contents of the segment
     pub data: Vec<u8>,
+    /// Contents of the current segment based on `SegmentType`
+    pub contents: SegmentContents,
 }
 
 impl ProgramHeader {
@@ -105,6 +108,14 @@ impl ProgramHeader {
 
         let data = reader.read_slice_from(segment_data_range)?.to_vec();
 
+        let contents = match p_type {
+            SegmentType::PtDynamic => {
+                // Parse the dynamic table
+                SegmentContents::Dynamic(DynamicTable::parse(&data)?)
+            },
+            _ => SegmentContents::Unknown,
+        };
+
         Ok(Self {
             p_type,
             p_flags,
@@ -114,7 +125,8 @@ impl ProgramHeader {
             p_filesz,
             p_memsz,
             p_align,
-            data
+            data,
+            contents,
         })
     }
 
@@ -138,6 +150,30 @@ impl ProgramHeader {
 
     pub fn p_flags(&self) -> SegmentFlags {
         self.p_flags
+    }
+
+    pub fn p_type(&self) -> SegmentType {
+        self.p_type
+    }
+
+    pub fn p_align(&self) -> Addr {
+        self.p_align
+    }
+
+    pub fn p_addr(&self) -> Addr {
+        self.p_paddr
+    }
+}
+
+impl fmt::Debug for ProgramHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            " Type: {:?}\n Flags: {:?}\n Contents: {:?}\n",
+            self.p_type,
+            self.p_flags,
+            self.contents,
+        )
     }
 }
 

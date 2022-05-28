@@ -13,7 +13,7 @@ impl<'a> Reader<'a> {
     }
 
     pub fn seek(&mut self, offset: usize) -> Result<(), ParseError> {
-        if offset < 0 || offset >= self.bytes.len() {
+        if offset >= self.bytes.len() {
             return Err(ParseError::OutOfBounds)
         }
 
