@@ -15,7 +15,8 @@ impl TryFrom<u16> for Machine {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
-    NotSupported
+    #[error("Machine not supported")]
+    NotSupported,
 }

@@ -1,6 +1,8 @@
 //! Module that defines a 64-bit address
 use core::{fmt, ops::Add, ops::Sub};
 
+use thiserror::Error;
+
 use crate::{error::ParseError, reader};
 
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
@@ -39,7 +41,7 @@ impl Into<u64> for Addr {
     }
 }
 
-/// Used for indexing and subslicing
+/// Use for serializing
 impl Into<usize> for Addr {
     fn into(self) -> usize {
         self.0 as usize
@@ -58,4 +60,10 @@ impl Addr {
         let value = reader.read_u64()?;
         Ok(Self(value))
     }
+}
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Failed integer conversion {0}")]
+    TryFromIntError(#[from] std::num::TryFromIntError),
 }

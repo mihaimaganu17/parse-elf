@@ -1,3 +1,5 @@
+use thiserror::Error;
+
 #[derive(Debug, PartialEq)]
 pub enum FileType {
     EtNone = 0x0,
@@ -21,7 +23,8 @@ impl TryFrom<u16> for FileType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum Error {
+    #[error("Unsupported file type")]
     Unsupported,
 }

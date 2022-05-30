@@ -7,7 +7,7 @@ use bitflags::bitflags;
 use crate::{
     error::SegmentError,
     reader::{Reader},
-    addr::Addr,
+    addr::Addr, DynamicError,
 };
 
 // Reserved inclusive range. Operating system specific.
@@ -215,6 +215,11 @@ pub enum DynamicTag {
     InitArraySz,
     /// Size, in bytes, of the array of termination functions.
     FiniArraySz,
+    /// The StrTab string table offset of a null-terminated library search path
+    /// string.
+    RunPath,
+    /// Flag values specific to this object.
+    Flags,
     /// A range between LoOs and HiOs reserved for environment-specific use.
     OsSpecific(u64),
     /// A range between LoProc and HiProc reserved for processor-specific use.
@@ -222,7 +227,7 @@ pub enum DynamicTag {
 }
 
 impl TryFrom<u64> for DynamicTag {
-    type Error = SegmentError;
+    type Error = DynamicError;
     fn try_from(value: u64) -> Result<DynamicTag, Self::Error> {
         let dynamic_tag = match value {
             0 => Self::Null,
@@ -254,9 +259,11 @@ impl TryFrom<u64> for DynamicTag {
             26 => Self::FiniArray,
             27 => Self::InitArraySz,
             28 => Self::FiniArraySz,
+            29 => Self::RunPath,
+            30 => Self::Flags,
             LOOS64..=HIOS64 => Self::OsSpecific(value),
             LOPROC64..=HIPROC64 => Self::ProcSpecific(value),
-            _ => return Err(SegmentError::DynamicEntryUnknown(value)),
+            _ => return Err(DynamicError::EntryUnknown(value)),
         };
 
         Ok(dynamic_tag)

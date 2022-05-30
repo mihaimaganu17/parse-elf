@@ -5,25 +5,40 @@ pub mod error;
 pub mod file_type;
 pub mod machine;
 pub mod segment;
+pub mod section;
 pub mod reader;
+pub mod reloc;
 
+use segment::DynamicEntry;
 pub use segment::{SegmentContents, DynamicTable};
 
 pub use crate::{
     addr::Addr,
-    error::{ElfError, ElfHeaderError, ProgramHeaderError},
+    error::{
+        ElfError,
+        ElfHeaderError,
+        ProgramHeaderError,
+        SegmentError,
+        ParseError,
+        DynamicError,
+        StringError,
+    },
     file_type::FileType,
     machine::Machine,
-    segment::{SegmentType, SegmentFlags},
+    segment::{SegmentType, SegmentFlags, DynamicTag},
+    reloc::{Rela, RelType},
     reader::Reader,
+    section::{SectionHeader},
 };
 
 /// Structure that represents an Elf 64-bit file
 /// We are only parsing x86 ISA little endian Elfs
 pub struct Elf64 {
     pub elf_header: ElfHeader,
-    /// Program Header table
+    /// `ProgramHeader` table
     pub ph_table: Vec<ProgramHeader>,
+    /// `SectionHeader` table
+    pub sh_table: Vec<SectionHeader>,
 }
 
 impl Elf64 {
@@ -41,10 +56,132 @@ impl Elf64 {
             ph_table.push(ProgramHeader::parse(&mut reader)?);
         }
 
+        // Allocate a new vector to hold the SectionHeader table
+        let mut sh_table = Vec::with_capacity(elf_header.e_shnum().into());
+        // Move the read cursor to the section header table beginning
+        reader.seek(elf_header.e_shoff().into())?;
+
+        for _ in 0..elf_header.e_shnum() {
+            sh_table.push(SectionHeader::parse(&mut reader)?);
+        }
+
         Ok(Self {
             elf_header,
             ph_table,
+            sh_table,
         })
+    }
+
+    /// Returns the `ProgramHeader` of the segment that contains the `addr`
+    pub fn segment_at(&self, addr: Addr) -> Option<&ProgramHeader> {
+        self.ph_table
+            .iter()
+            .filter(|ph| ph.p_type == SegmentType::PtLoad)
+            .find(|ph| ph.mem_range().contains(&addr))
+    }
+
+    /// Returns a slice from the the Load segment containing `mem_addr` address.
+    /// The slice spans from `mem_addr` until the end of the segment.
+    pub fn slice_at(&self, mem_addr: Addr) -> Option<&[u8]> {
+        self.segment_at(mem_addr)
+            .map(|seg| &seg.data[(mem_addr - seg.mem_range().start).into()..])
+    }
+
+    /// Returns a string from the string table located at `offset`.
+    pub fn get_string(&self, offset: Addr) -> Result<String, StringError> {
+        let addr = self.dynamic_entry(DynamicTag::StrTab).ok_or(StringError::StringNotFound)?;
+        let slice = self
+            .slice_at(addr + offset)
+            .ok_or(StringError::StrTabSegmentNotFound)?;
+        // String are null terminated. So we split the slice into slices separated by '\0'
+        let string_slice = slice.split(|&c| c == 0).next().ok_or(StringError::StringNotFound)?;
+        Ok(String::from_utf8_lossy(string_slice).into())
+    }
+
+    /// Returns the first segment of type `p_type`.
+    pub fn segment_of_type(&self, p_type: SegmentType) -> Option<&ProgramHeader> {
+        self.ph_table
+            .iter()
+            .find(|ph| ph.p_type() == p_type)
+    }
+
+    /// Return an entry from the Dynamic table with the given `tag` or None if `tag` does not exist
+    /// in the table
+    pub fn dynamic_entry(&self, tag: DynamicTag) -> Option<Addr> {
+        self.dynamic_entries(tag).next()
+    }
+
+    pub fn dynamic_table(&self) -> Option<&[DynamicEntry]> {
+        match self.segment_of_type(SegmentType::PtDynamic) {
+            Some(ProgramHeader {
+                contents: SegmentContents::Dynamic(table),
+                ..
+            }) => Some(table.entries()),
+            _ => None,
+        }
+    }
+
+    /// Returns an `Interator` over addresses contained in the entries of the dynamic table which
+    /// have `tag`
+    pub fn dynamic_entries(&self, tag: DynamicTag) -> impl Iterator<Item = Addr> + '_{
+        self.dynamic_table()
+            .unwrap_or_default()
+            .iter()
+            .filter(move |e| e.d_tag == tag)
+            .map(|e| e.d_un)
+    }
+
+    pub fn dynamic_entry_strings(&self, tag: DynamicTag) -> impl Iterator<Item = String> + '_ {
+        self.dynamic_entries(tag)
+            .filter_map(move |addr| self.get_string(addr).ok())
+    }
+
+    /// Reads and returns the vector of `Rela` entries from the file
+    pub fn read_rela_entries(&self) -> Result<Vec<Rela>, SegmentError> {
+        use DynamicTag;
+        use DynamicError;
+
+        // Get address for the Rela entries
+        let rela_addr = self
+            .dynamic_entry(DynamicTag::RelA)
+            .ok_or(DynamicError::TagNotFound(DynamicTag::RelA))?;
+
+        // Get total length, in bytes, for the Rela entries
+        let rela_len = self
+            .dynamic_entry(DynamicTag::RelASz)
+            .ok_or(DynamicError::TagNotFound(DynamicTag::RelASz))?;
+
+        // Get the segment where the Rela entries are store
+        let seg = self.segment_at(rela_addr).ok_or(SegmentError::BadPtLoadAddr(rela_addr))?;
+
+        // Prepare a range to fetch bytes
+        let rela_range: Range<usize> = Range { 
+            start: (rela_addr - seg.mem_range().start).into(),
+            end: ((rela_addr + rela_len) - seg.mem_range().start).into(),
+        };
+
+        // Fetch the slice to parse the rela from
+        let rela_slice = seg.data.get(rela_range.clone()).ok_or(ParseError::BadRange(rela_range))?;
+
+        // Construct a reader
+        let mut reader = Reader::from_bytes(rela_slice);
+
+        // Initialise a `Vec` to hold Rela entries
+        let mut rela_entries: Vec<Rela> = vec![];
+        // Parse the Rela entries
+        while reader.index < rela_len.into() {
+            let rela = Rela::parse(&mut reader)?;
+            rela_entries.push(rela);
+        }
+
+        Ok(rela_entries)
+        
+    }
+
+    /// Returns the section header that start at EXACTLY this virtual address `addr`,
+    /// or `None` if we can't find one.
+    pub fn section_starting_at(&self, addr: Addr) -> Option<&SectionHeader> {
+        self.sh_table.iter().find(|&sh| sh.sh_addr() == addr)
     }
 }
 
@@ -195,6 +332,12 @@ pub struct ElfHeader {
     pub e_phentsize: u16,
     /// Contains the number of entries in the program header table.
     pub e_phnum: u16,
+    /// Contains the size of a section header table entry.
+    pub e_shentsize: u16,
+    /// Contains the number of entries in the section header table.
+    pub e_shnum: u16,
+    /// Contains index of the section header table entry that contains the section names.
+    pub e_shstrndx: u16,
 }
 
 impl ElfHeader {
@@ -266,9 +409,13 @@ impl ElfHeader {
 
         // Read the size of a Program Header table entry.
         let e_phentsize = reader.read_u16()?;
-
         // Read Program Header table entries
         let e_phnum = reader.read_u16()?;
+
+        // Read information about the section header table
+        let e_shentsize = reader.read_u16()?;
+        let e_shnum = reader.read_u16()?;
+        let e_shstrndx = reader.read_u16()?;
 
 
         Ok(ElfHeader{
@@ -279,6 +426,9 @@ impl ElfHeader {
             e_shoff,
             e_phentsize,
             e_phnum,
+            e_shentsize,
+            e_shnum,
+            e_shstrndx,
         })
     }
 
@@ -286,8 +436,16 @@ impl ElfHeader {
         self.e_phoff
     }
 
+    pub fn e_shoff(&self) -> Addr {
+        self.e_shoff
+    }
+
     pub fn e_phnum(&self) -> u16 {
         self.e_phnum
+    }
+
+    pub fn e_shnum(&self) -> u16 {
+        self.e_shnum
     }
 }
 
